@@ -1,6 +1,7 @@
 #include <stdio.h>
+#include <openssl/ssl.h>
 
 int main() {
-    printf("Hello, JFrog! This is a generic demo for stellanis POC\n");
+    printf("OpenSSL version: %s\n", OpenSSL_version(OPENSSL_VERSION));
     return 0;
 }
