@@ -1,0 +1,65 @@
+name: Promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      rb-version:
+        description: 'Release bundle version'     
+        required: true
+      environment:
+        description: 'Environment to promote to'
+        required: true
+        type: choice
+        default: 'TEST'
+        options:
+          - QA
+          - DEV
+          - PROD
+          - TEST
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  Promote-C-Binary-Release:
+    runs-on: ubuntu-latest
+    steps:
+    
+      - name: Checkout
+        uses: actions/checkout@v4
+    
+      - name: Install JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+
+      - name: Install OPA
+        run: |
+          curl -L -o opa https://openpolicyagent.org/downloads/latest/opa_linux_amd64
+          chmod +x opa
+          sudo mv opa /usr/local/bin/
+
+      - name: Call GraphQL Evidence
+        run: |
+          ./scripts/graphql.sh ${{ vars.ARTIFACTORY_URL }} ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }} release-bundles-v2 ${{ github.actor }}-c-demo ${{ inputs.rb-version }}
+          cat evidence_graph.json
+
+      - name: Evaluate Policy
+        id: run_policy
+        run: |
+          opa eval --input ./evidence_graph.json --data policy/policy.rego "data.policy.output"
+          RESULT=$(opa eval --input ./evidence_graph.json --data policy/policy.rego "data.policy.output" | jq '.result[0].expressions[0].value.approved')
+          echo "RESULT=${RESULT}" >> $GITHUB_ENV
+
+      - name: Promote if Approved
+        run: |
+          if [ "${{ env.RESULT }}" == "true" ]; then
+            jf release-bundle-promote ${{ github.actor }}-c-demo ${{ inputs.rb-version }} ${{ inputs.environment }} --signing-key ${{ secrets.RB_KEY }} --sync=true
+            echo "🚀 Successfully promoted to \`${{ inputs.environment }}\` environment" >> $GITHUB_STEP_SUMMARY
+          else
+            opa eval --input ./evidence_graph.json --data policy/policy.rego "data.policy.output" | jq '.result[0].expressions[0].value'
+            echo "❌ Failed promotion policy check" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
