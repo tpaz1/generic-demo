@@ -58,7 +58,8 @@ jobs:
       - name: Create release bundle
         run: |
           echo '{ "files": [ {"build": "'"${{ github.workflow }}/${{ github.run_number }}"'" } ] }' > bundle-spec.json
-          jf release-bundle-create ${{ github.actor }}-c-demo ${{ github.run_number }} --signing-key ${{ secrets.RB_KEY }} --spec bundle-spec.json --target DEV --sync=true
+          jf release-bundle-create ${{ github.actor }}-c-demo ${{ github.run_number }} --signing-key ${{ secrets.RB_KEY }} --spec bundle-spec.json --sync=true
+          jf release-bundle-promote ${{ github.actor }}-c-demo ${{ github.run_number }} DEV --signing-key ${{ secrets.RB_KEY }} --sync=true
           VER_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ github.actor }}-c-demo'&bundleToFlash='${{ github.actor }}-c-demo'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeKanbanTab=promotion'
           echo '📦 Release bundle ['${{ github.actor }}-c-demo:${{ github.run_number }}']('${VER_LINK}') created' >> $GITHUB_STEP_SUMMARY
 
