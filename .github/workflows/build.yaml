@@ -1,0 +1,70 @@
+name: tomp-c-binary-build-with-evidence
+
+on:
+  [workflow_dispatch]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  c-binary-build:
+    runs-on: ubuntu-latest
+    env:
+      REPO_NAME: tomp-generic-dev-local
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+
+      - name: Compile C project
+        run: |
+          gcc main.c -o hello-jfrog
+
+      - name: Install JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        env:
+          JF_URL: ${{ vars.ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.ARTIFACTORY_ACCESS_TOKEN }}
+
+      - name: Upload C binary to Generic Repo
+        run: |
+          jf rt u "hello-jfrog" "${{ env.REPO_NAME }}/c-demo/hello-jfrog-${{ github.run_number }}"
+
+      - name: Attach artifact signature evidence
+        run: |
+          echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'" }' > sign.json
+          jf evd create --package-name hello-jfrog --package-version ${{ github.run_number }} --package-repo-name ${{ env.REPO_NAME }} \
+            --key "${{ secrets.PRIVATE_KEY }}" --key-alias ${{ secrets.KEY_ALIAS }} \
+            --predicate ./sign.json --predicate-type https://jfrog.com/evidence/signature/v1 
+          echo '🔏 Artifact evidence attached'
+
+      - name: Add Git and env info to build
+        run: |
+          jf rt build-add-git
+          jf rt build-collect-env
+          jf rt build-publish
+
+      - name: Sign build evidence
+        run: |
+          echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'" }' > sign.json
+          jf evd create --build-name ${{ github.workflow }} --build-number ${{ github.run_number }} \
+            --predicate ./sign.json --predicate-type https://jfrog.com/evidence/build-signature/v1 \
+            --key "${{ secrets.PRIVATE_KEY }}" --key-alias ${{ secrets.KEY_ALIAS }}
+
+      - name: Create release bundle
+        run: |
+          echo '{ "files": [ {"build": "'"${{ github.workflow }}/${{ github.run_number }}"'" } ] }' > bundle-spec.json
+          jf release-bundle-create ${{ github.actor }}-c-demo ${{ github.run_number }} --signing-key ${{ secrets.RB_KEY }} --spec bundle-spec.json --sync=true
+          VER_LINK=${{ vars.ARTIFACTORY_URL }}'/ui/artifactory/lifecycle/?bundleName='${{ github.actor }}-c-demo'&bundleToFlash='${{ github.actor }}-c-demo'&releaseBundleVersion='${{ github.run_number }}'&repositoryKey=release-bundles-v2&activeKanbanTab=promotion'
+          echo '📦 Release bundle ['${{ github.actor }}-c-demo:${{ github.run_number }}']('${VER_LINK}') created' >> $GITHUB_STEP_SUMMARY
+
+      - name: Approve release bundle
+        run: |
+          echo '{ "actor": "${{ github.actor }}", "date": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'", "approved": "true" }' > rbv2_approval_evidence.json
+          jf evd create --key "${{ secrets.PRIVATE_KEY }}" --key-alias ${{ secrets.KEY_ALIAS }} \
+            --release-bundle ${{ github.actor }}-c-demo --release-bundle-version ${{ github.run_number }} \
+            --predicate ./rbv2_approval_evidence.json --predicate-type https://jfrog.com/evidence/approval/v1
+          echo '✅ Release bundle approved' >> $GITHUB_STEP_SUMMARY
